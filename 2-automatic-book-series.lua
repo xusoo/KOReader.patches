@@ -237,7 +237,12 @@ local function patchCoverBrowser(plugin)
                                 sort_percent = item.sort_percent,
                                 percent_finished = item.percent_finished,
                                 opened = item.opened,
-                                doc_props = item.doc_props,
+                                -- Ensure doc_props exists for sorting - use item's or create minimal one
+                                doc_props = item.doc_props or {
+                                    series = s_name,
+                                    series_index = 0,
+                                    display_title = s_name,
+                                },
                                 suffix = item.suffix,
                             }
                             -- Cache this group
@@ -299,7 +304,10 @@ local function patchCoverBrowser(plugin)
                 for _, item in ipairs(processed_list) do
                     if item.is_go_up then up_item = item else table.insert(to_sort, item) end
                 end
-                table.sort(to_sort, sort_func)
+                local ok, err = pcall(table.sort, to_sort, sort_func)
+                if not ok then
+                    logger.warn("AutomaticSeries: Sort failed, using unsorted list:", err)
+                end
                 
                 if up_item then table.insert(final_table, up_item) end
                 for _, item in ipairs(to_sort) do table.insert(final_table, item) end
@@ -324,7 +332,10 @@ local function patchCoverBrowser(plugin)
             end
             
             -- We must resort 'dirs' to ensure our new Series Groups are sorted correctly among other real folders.
-            table.sort(dirs, sort_func)
+            local ok, err = pcall(table.sort, dirs, sort_func)
+            if not ok then
+                logger.warn("AutomaticSeries: Sort failed, using unsorted list:", err)
+            end
             
             if up_item then table.insert(final_table, up_item) end
             for _, d in ipairs(dirs) do table.insert(final_table, d) end
