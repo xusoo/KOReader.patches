@@ -153,19 +153,6 @@ local function patchCoverBrowser(plugin)
     local AutomaticSeries = {
         BookInfoManager = BookInfoManager,
     }
-
-    -- Helper to reset title bar
-    local function resetTitle(file_chooser, parent_path)
-        if file_chooser.title_bar then
-            local home_dir = G_reader_settings:readSetting("home_dir")
-            if parent_path == home_dir then
-                file_chooser.title_bar:setSubTitle(_("Home"))
-            else
-                local _, folder_name = util.splitFilePathName(parent_path)
-                file_chooser.title_bar:setSubTitle(folder_name)
-            end
-        end
-    end
     
     function AutomaticSeries:processItemTable(item_table, file_chooser)
         -- Defensive check
@@ -467,14 +454,9 @@ local function patchCoverBrowser(plugin)
         return old_onFolderUp(file_chooser)
     end
     
-    -- Override onMenuSelect to handle up-item clicks and series group clicks
+    -- Override onMenuSelect to handle series group clicks
     FileChooser.onMenuSelect = function(file_chooser, item)
-        -- Handle up-item click in virtual folder
-        if item.is_go_up and file_chooser.item_table and file_chooser.item_table.is_in_series_view then
-            return old_onMenuSelect(file_chooser, item)
-        end
-        
-        -- Handle series group click
+        -- Handle series group click - open the virtual folder
         if isEnabled() and item.is_series_group then
             AutomaticSeries:openSeriesGroup(file_chooser, item)
             return true
@@ -483,10 +465,9 @@ local function patchCoverBrowser(plugin)
         return old_onMenuSelect(file_chooser, item)
     end
     
-    -- Override changeToPath to redirect ".." navigation from virtual folders and reset title
+    -- Override changeToPath to clear virtual folder state and redirect ".." navigation
     FileChooser.changeToPath = function(file_chooser, path, ...)
-        -- Any explicit navigation (like Home button, Go To, etc.) should exit the virtual folder state
-        -- This fixes the loop where clicking Home would just restore the series view if Home == parent_path
+        -- Any explicit navigation should exit the virtual folder state
         current_series_group = nil
 
         -- If we're in a virtual series view and path contains "..", redirect to real parent
@@ -496,8 +477,6 @@ local function patchCoverBrowser(plugin)
                 path = parent_path
             end
         end
-        
-        resetTitle(file_chooser, path)
 
         return old_changeToPath(file_chooser, path, ...)
     end
