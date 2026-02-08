@@ -238,6 +238,8 @@ local function patchCoverBrowser(plugin)
                             -- Cache this group
                             series_map[s_name] = group_item
                             table.insert(processed_list, group_item)
+                            -- Store the list index to allow replacement if ungrouping needed
+                            group_item._list_index = #processed_list
                         else
                             -- Existing Series Group
                             table.insert(series_map[s_name].series_items, item)
@@ -256,23 +258,30 @@ local function patchCoverBrowser(plugin)
     
         -- Update the item count in the text for each series group
         for _, group in pairs(series_map) do
-            -- Set mandatory to show book count with folder icon (displays as badge on right)
-            group.mandatory = tostring(#group.series_items) .. " \u{F016}"
-            -- Also sort the internal list of books by series index
-            table.sort(group.series_items, function(a, b)
-                local info_a = self.BookInfoManager:getBookInfo(a.path)
-                local info_b = self.BookInfoManager:getBookInfo(b.path)
-                local idx_a = (info_a and info_a.series_index) or 0
-                local idx_b = (info_b and info_b.series_index) or 0
-                if reverse then
-                    return idx_a > idx_b
-                else
-                    return idx_a < idx_b
+            if #group.series_items == 1 then
+                -- Single book in series: Ungroup it!
+                -- Replace the group item in the list with the single book item
+                -- We use the stored index to find where the group was inserted
+                if group._list_index and processed_list[group._list_index] == group then
+                    -- The single book is the first (and only) item in series_items
+                    local single_book = group.series_items[1]
+                    processed_list[group._list_index] = single_book
                 end
-            end)
-            -- Cache the series items by the virtual folder path for ProjectTitle hook
-            if group.path then
-                series_items_cache[group.path] = group.series_items
+            else
+                -- Set mandatory to show book count with folder icon (displays as badge on right)
+                group.mandatory = tostring(#group.series_items) .. " \u{F016}"
+                -- Also sort the internal list of books by series index
+                table.sort(group.series_items, function(a, b)
+                    local info_a = self.BookInfoManager:getBookInfo(a.path)
+                    local info_b = self.BookInfoManager:getBookInfo(b.path)
+                    local idx_a = (info_a and info_a.series_index) or 0
+                    local idx_b = (info_b and info_b.series_index) or 0
+                    return idx_a < idx_b
+                end)
+                -- Cache the series items by the virtual folder path for ProjectTitle hook
+                if group.path then
+                    series_items_cache[group.path] = group.series_items
+                end
             end
         end
         
