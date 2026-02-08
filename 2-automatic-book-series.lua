@@ -387,6 +387,27 @@ local function patchCoverBrowser(plugin)
     local old_onFolderUp = FileChooser.onFolderUp
     local old_changeToPath = FileChooser.changeToPath
     local old_refreshPath = FileChooser.refreshPath
+    local old_goHome = FileChooser.goHome
+    
+    -- Hook goHome to handle Home button when inside virtual folder
+    FileChooser.goHome = function(file_chooser)
+        -- If we're in a virtual series view, exit it first
+        if file_chooser.item_table and file_chooser.item_table.is_in_series_view then
+            local parent_path = file_chooser.item_table.parent_path
+            -- Clear virtual folder state
+            current_series_group = nil
+            -- Reset title
+            resetTitle(file_chooser, parent_path)
+            -- Now check if parent IS home - if so, just refresh to show parent
+            local home_dir = G_reader_settings:readSetting("home_dir")
+            if parent_path == home_dir then
+                file_chooser:changeToPath(parent_path)
+                return true
+            end
+            -- Otherwise, fall through to original goHome which navigates to home
+        end
+        return old_goHome(file_chooser)
+    end
     
     -- Hook refreshPath to detect returning from a book
     FileChooser.refreshPath = function(file_chooser)
@@ -463,6 +484,11 @@ local function patchCoverBrowser(plugin)
                 return old_changeToPath(file_chooser, parent_path)
             end
         end
+        
+        -- Any explicit navigation (like Home button, Go To, etc.) should exit the virtual folder state
+        -- This fixes the loop where clicking Home would just restore the series view if Home == parent_path
+        current_series_group = nil
+        
         -- Otherwise, use the original behavior
         return old_changeToPath(file_chooser, path, ...)
     end
