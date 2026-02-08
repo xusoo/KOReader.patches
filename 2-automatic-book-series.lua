@@ -158,6 +158,7 @@ local function automaticSeriesPatch(plugin)
         if not file_chooser or not item_table then return end
 
         logger.dbg("AutomaticSeries: Processing Items")
+        
         local collate, collate_id = file_chooser:getCollate()
         local reverse = G_reader_settings:isTrue("reverse_collate")
         local sort_func = file_chooser:getSortingFunction(collate, reverse)
@@ -169,19 +170,17 @@ local function automaticSeriesPatch(plugin)
         local series_map = {}
         local processed_list = {}
         
-        -- Check if the original item table has an up-folder item
+        -- Track for single-series detection (to skip grouping if folder already organized)
+        local book_count = 0
+        local non_series_book_count = 0
+        
         up_folder_visible = false
+        
         for _, item in ipairs(item_table) do
+            -- Handle "go up" items
             if item.is_go_up then
                 up_folder_visible = true
                 up_folder_text = item.text
-                break
-            end
-        end
-        
-        for _, item in ipairs(item_table) do
-            -- Skip "go up" items, handle them separately
-            if item.is_go_up then
                 table.insert(processed_list, item)
             else
                 -- Ensure safe sort properties for ALL items (files and directories)
@@ -189,15 +188,17 @@ local function automaticSeriesPatch(plugin)
                 if not item.percent_finished then item.percent_finished = 0 end
                 if not item.opened then item.opened = false end
     
-                -- Robustly check for file/dir properties using standard BookList/FileChooser structure
-                local is_file = item.is_file 
-    
+                local is_file = item.is_file
                 local series_handled = false
                 
                 if is_file and item.path then
+                    book_count = book_count + 1
                     local info = self.BookInfoManager:getBookInfo(item.path)
                     if info and info.series then
                         local s_name = info.series
+                        -- Cache series_index on item to avoid repeated getBookInfo calls during sorting
+                        item._series_index = info.series_index or 0
+                        
                         if not series_map[s_name] then
                             -- New Series Group
                             logger.dbg("AutomaticSeries: Found series", info.series)
@@ -241,6 +242,8 @@ local function automaticSeriesPatch(plugin)
                             table.insert(series_map[s_name].series_items, item)
                         end
                         series_handled = true
+                    else
+                        non_series_book_count = non_series_book_count + 1
                     end
                 end
                 
@@ -251,28 +254,36 @@ local function automaticSeriesPatch(plugin)
         end
     
         logger.dbg("AutomaticSeries: Done grouping.")
+        
+        -- Count unique series (break early if more than 1)
+        local series_count = 0
+        for _ in pairs(series_map) do
+            series_count = series_count + 1
+            if series_count > 1 then break end
+        end
+        
+        -- Skip applying changes if all books are from the same single series
+        -- (folder is already organized by series manually)
+        if series_count == 1 and non_series_book_count == 0 and book_count > 0 then
+            logger.dbg("AutomaticSeries: Skipping - all books from same series")
+            return
+        end
     
         -- Update the item count in the text for each series group
         for _, group in pairs(series_map) do
             if #group.series_items == 1 then
                 -- Single book in series: Ungroup it!
                 -- Replace the group item in the list with the single book item
-                -- We use the stored index to find where the group was inserted
                 if group._list_index and processed_list[group._list_index] == group then
-                    -- The single book is the first (and only) item in series_items
                     local single_book = group.series_items[1]
                     processed_list[group._list_index] = single_book
                 end
             else
                 -- Set mandatory to show book count with folder icon (displays as badge on right)
                 group.mandatory = tostring(#group.series_items) .. " \u{F016}"
-                -- Also sort the internal list of books by series index
+                -- Sort the internal list of books by series index (using cached _series_index)
                 table.sort(group.series_items, function(a, b)
-                    local info_a = self.BookInfoManager:getBookInfo(a.path)
-                    local info_b = self.BookInfoManager:getBookInfo(b.path)
-                    local idx_a = (info_a and info_a.series_index) or 0
-                    local idx_b = (info_b and info_b.series_index) or 0
-                    return idx_a < idx_b
+                    return (a._series_index or 0) < (b._series_index or 0)
                 end)
                 -- Cache the series items by the virtual folder path for ProjectTitle hook
                 if group.path then
@@ -375,7 +386,7 @@ local function automaticSeriesPatch(plugin)
         -- Tag this table as a virtual series view
         items.is_in_series_view = true
         items.parent_path = parent_path
-        
+       
         -- Switch view
         file_chooser:switchItemTable(nil, items, nil, nil, group_item.text)
     end
