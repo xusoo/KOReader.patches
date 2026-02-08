@@ -25,7 +25,7 @@ A patch that automatically groups books belonging to the same series into virtua
 1. Install the patch as described above.
 2. Open the File Browser.
 3. To toggle the feature, go to the top menu:
-   - **Settings** (gear icon) → **File browser settings** → **Group series in folders**
+   - **File Browser** (first icon) → **Settings** → **Group book series into folders**
 
 ### Compatibility
 This patch is designed to work harmoniously with other popular plugins and patches:
