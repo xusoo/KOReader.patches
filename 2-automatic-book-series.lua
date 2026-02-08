@@ -1,5 +1,8 @@
 -- Automatic Series Grouping Patch
 local FileChooser = require("ui/widget/filechooser")
+local FileManager = require("apps/filemanager/filemanager")
+local TitleBar = require("ui/widget/titlebar")
+
 local logger = require("logger")
 local userpatch = require("userpatch")
 local _ = require("gettext")
@@ -154,17 +157,20 @@ local function patchCoverBrowser(plugin)
     -- Helper to reset title bar
     local function resetTitle(file_chooser, parent_path)
         if file_chooser.title_bar then
-            if titlebar_title then
-                file_chooser.title_bar:setTitle(titlebar_title)
-                titlebar_title = nil -- Clear after use
+            local home_dir = G_reader_settings:readSetting("home_dir")
+            if parent_path == home_dir then
+                file_chooser.title_bar:setSubTitle(_("Home"))
             else
                 local _, folder_name = util.splitFilePathName(parent_path)
-                file_chooser.title_bar:setTitle(folder_name)
+                file_chooser.title_bar:setSubTitle(folder_name)
             end
         end
     end
     
     function AutomaticSeries:processItemTable(item_table, file_chooser)
+        -- Defensive check
+        if not file_chooser or not item_table then return end
+
         logger.dbg("AutomaticSeries: Processing Items")
         local collate, collate_id = file_chooser:getCollate()
         local reverse = G_reader_settings:isTrue("reverse_collate")
@@ -183,7 +189,6 @@ local function patchCoverBrowser(plugin)
             if item.is_go_up then
                 up_folder_visible = true
                 up_folder_text = item.text
-                logger.dbg("AutomaticSeries: Found up-folder item", up_folder_text)
                 break
             end
         end
@@ -206,10 +211,10 @@ local function patchCoverBrowser(plugin)
                 if is_file and item.path then
                     local info = self.BookInfoManager:getBookInfo(item.path)
                     if info and info.series then
-                        logger.dbg("AutomaticSeries: Found series", info.series)
                         local s_name = info.series
                         if not series_map[s_name] then
                             -- New Series Group
+                            logger.dbg("AutomaticSeries: Found series", info.series)
                             
                             -- Shallow copy attributes
                             local group_attr = {}
@@ -254,7 +259,7 @@ local function patchCoverBrowser(plugin)
             end
         end
     
-        logger.dbg("AutomaticSeries: Done loop. Map size", #series_map)
+        logger.dbg("AutomaticSeries: Done grouping.")
     
         -- Update the item count in the text for each series group
         for _, group in pairs(series_map) do
@@ -326,7 +331,7 @@ local function patchCoverBrowser(plugin)
             for _, f in ipairs(files) do table.insert(final_table, f) end
         end
     
-        logger.dbg("AutomaticSeries: Final table count", #final_table)
+        logger.dbg("AutomaticSeries: Done sorting.")
         
         -- Update item_table in place (clear and fill)
         for k in pairs(item_table) do item_table[k] = nil end
@@ -343,9 +348,6 @@ local function patchCoverBrowser(plugin)
         
         -- Store the real parent path before entering the virtual folder
         local parent_path = file_chooser.path
-        if file_chooser.title_bar then
-            titlebar_title = file_chooser.title_bar.title
-        end
         
         -- Store the group for state persistence across refreshes
         current_series_group = {
@@ -378,10 +380,21 @@ local function patchCoverBrowser(plugin)
         items.parent_path = parent_path
         
         -- Switch view
-        file_chooser:switchItemTable(group_item.text, items)
+        file_chooser:switchItemTable(nil, items, nil, nil, group_item.text)
     end
     
-    -- Hook FileChooser
+    -- Hook TitleBar.setSubTitle to prevent "Home" from overwriting series name
+    -- This catches ALL attempts to change the subtitle, including during FileManager init
+    local old_setSubTitle = TitleBar.setSubTitle
+    TitleBar.setSubTitle = function(self, subtitle, no_refresh)
+        -- If we're in a virtual series view, block attempts to set subtitle to "Home"
+        if current_series_group then
+            -- Replace "Home" with series name
+            return old_setSubTitle(self, current_series_group.series_name, no_refresh)
+        end
+        return old_setSubTitle(self, subtitle, no_refresh)
+    end
+    
     local old_updateItems = FileChooser.updateItems
     local old_onMenuSelect = FileChooser.onMenuSelect
     local old_onFolderUp = FileChooser.onFolderUp
@@ -396,9 +409,8 @@ local function patchCoverBrowser(plugin)
             local parent_path = file_chooser.item_table.parent_path
             -- Clear virtual folder state
             current_series_group = nil
-            -- Reset title
-            resetTitle(file_chooser, parent_path)
-            -- Now check if parent IS home - if so, just refresh to show parent
+
+            -- Now check if parent IS home - force refresh to show parent
             local home_dir = G_reader_settings:readSetting("home_dir")
             if parent_path == home_dir then
                 file_chooser:changeToPath(parent_path)
@@ -418,7 +430,7 @@ local function patchCoverBrowser(plugin)
         old_refreshPath(file_chooser)
         
         -- After refresh, check if we should open a series group
-        if isEnabled() and book_path and not current_series_group then
+        if isEnabled() and book_path and current_series_group then
             local bookinfo = BookInfoManager:getBookInfo(book_path)
             if bookinfo and bookinfo.series then
                 for _, item in ipairs(file_chooser.item_table) do
@@ -437,16 +449,10 @@ local function patchCoverBrowser(plugin)
         if file_chooser.item_table and file_chooser.item_table.is_in_series_view then
             local parent_path = file_chooser.item_table.parent_path
             if parent_path then
-                -- Clear virtual folder state BEFORE navigating
-                current_series_group = nil
-                -- Navigate to parent
                 file_chooser:changeToPath(parent_path)
-                -- Explicitly reset title (switchItemTable with nil title doesn't update it)
-                resetTitle(file_chooser, parent_path)
                 return true
             end
         end
-        -- Otherwise, use the original behavior
         return old_onFolderUp(file_chooser)
     end
     
@@ -454,14 +460,7 @@ local function patchCoverBrowser(plugin)
     FileChooser.onMenuSelect = function(file_chooser, item)
         -- Handle up-item click in virtual folder
         if item.is_go_up and file_chooser.item_table and file_chooser.item_table.is_in_series_view then
-            local parent_path = file_chooser.item_table.parent_path
-            -- Clear virtual folder state BEFORE letting original handle it
-            current_series_group = nil
-            -- Call original handler
-            local result = old_onMenuSelect(file_chooser, item)
-            -- Reset title after navigation
-            resetTitle(file_chooser, parent_path)
-            return result
+            return old_onMenuSelect(file_chooser, item)
         end
         
         -- Handle series group click
@@ -473,23 +472,22 @@ local function patchCoverBrowser(plugin)
         return old_onMenuSelect(file_chooser, item)
     end
     
-    -- Override changeToPath to redirect ".." navigation from virtual folders
+    -- Override changeToPath to redirect ".." navigation from virtual folders and reset title
     FileChooser.changeToPath = function(file_chooser, path, ...)
+        -- Any explicit navigation (like Home button, Go To, etc.) should exit the virtual folder state
+        -- This fixes the loop where clicking Home would just restore the series view if Home == parent_path
+        current_series_group = nil
+
         -- If we're in a virtual series view and path contains "..", redirect to real parent
         if file_chooser.item_table and file_chooser.item_table.is_in_series_view then
             local parent_path = file_chooser.item_table.parent_path
             if parent_path and path and (path:match("/%.%.") or path:match("^%.%.")) then
-                -- Clear state and redirect (this handles edge cases like "../..")
-                current_series_group = nil
-                return old_changeToPath(file_chooser, parent_path)
+                path = parent_path
             end
         end
         
-        -- Any explicit navigation (like Home button, Go To, etc.) should exit the virtual folder state
-        -- This fixes the loop where clicking Home would just restore the series view if Home == parent_path
-        current_series_group = nil
-        
-        -- Otherwise, use the original behavior
+        resetTitle(file_chooser, path)
+
         return old_changeToPath(file_chooser, path, ...)
     end
     
@@ -512,22 +510,7 @@ local function patchCoverBrowser(plugin)
         
         logger.dbg("AutomaticSeries Patch: Grouping triggered for path", file_chooser.path)
         AutomaticSeries:processItemTable(file_chooser.item_table, file_chooser)
-        
-        -- Check if we should restore a virtual folder view after refresh
-        if current_series_group and current_series_group.parent_path == file_chooser.path then
-            -- Find the series group in the processed item table
-            for _, item in ipairs(file_chooser.item_table) do
-                if item.is_series_group and item.text == current_series_group.series_name then
-                    -- Call updateItems first to update the UI
-                    local result = old_updateItems(file_chooser, ...)
-                    AutomaticSeries:openSeriesGroup(file_chooser, item)
-                    return result
-                end
-            end
-            -- If series group not found (e.g., no longer meets criteria), clear the state
-            current_series_group = nil
-        end
-    
+
         return old_updateItems(file_chooser, ...)
     end
     
