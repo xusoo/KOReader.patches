@@ -12,7 +12,6 @@ logger.dbg("AutomaticSeries Patch: Loading...")
 
 local up_folder_visible = false
 local up_folder_text = "../"
-local titlebar_title = nil
 
 -- Global cache mapping virtual series folder paths to their book items
 -- This allows the ProjectTitle plugin to find books for folder cover rendering
@@ -411,22 +410,12 @@ local function automaticSeriesPatch(plugin)
     local old_changeToPath = FileChooser.changeToPath
     local old_refreshPath = FileChooser.refreshPath
     local old_goHome = FileChooser.goHome
-    
+
     -- Hook goHome to handle Home button when inside virtual folder
     FileChooser.goHome = function(file_chooser)
         -- If we're in a virtual series view, exit it first
-        if file_chooser.item_table and file_chooser.item_table.is_in_series_view then
-            local parent_path = file_chooser.item_table.parent_path
-            -- Clear virtual folder state
-            current_series_group = nil
-
-            -- Now check if parent IS home - force refresh to show parent
-            local home_dir = G_reader_settings:readSetting("home_dir")
-            if parent_path == home_dir then
-                file_chooser:changeToPath(parent_path)
-                return true
-            end
-            -- Otherwise, fall through to original goHome which navigates to home
+        if exitVirtualFolderIfNeeded(file_chooser) then
+            return true
         end
         return old_goHome(file_chooser)
     end
