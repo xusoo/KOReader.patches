@@ -24,7 +24,7 @@ local current_series_group = nil
 -- Flag to prevent duplicate menu items
 local menu_item_added = false
 
-local function patchCoverBrowser(plugin)
+local function automaticSeriesPatch(plugin)
     local MosaicMenu = require("mosaicmenu")
     local MosaicMenuItem = userpatch.getUpValue(MosaicMenu._updateItemsBuildUI, "MosaicMenuItem")
     if not MosaicMenuItem then return end
@@ -381,6 +381,18 @@ local function patchCoverBrowser(plugin)
         file_chooser:switchItemTable(nil, items, nil, nil, group_item.text)
     end
     
+    -- Helper: Exit virtual folder if currently in one. Returns true if handled.
+    local function exitVirtualFolderIfNeeded(file_chooser)
+        if file_chooser and file_chooser.item_table and file_chooser.item_table.is_in_series_view then
+            local parent_path = file_chooser.item_table.parent_path
+            if parent_path then
+                file_chooser:changeToPath(parent_path)
+                return true
+            end
+        end
+        return false
+    end
+    
     -- Hook TitleBar.setSubTitle to prevent "Home" from overwriting series name
     -- This catches ALL attempts to change the subtitle, including during FileManager init
     local old_setSubTitle = TitleBar.setSubTitle
@@ -443,15 +455,27 @@ local function patchCoverBrowser(plugin)
     
     -- Override onFolderUp to handle virtual folder navigation (toolbar up button)
     FileChooser.onFolderUp = function(file_chooser)
-        -- If we're in a virtual series view, navigate to the real parent
-        if file_chooser.item_table and file_chooser.item_table.is_in_series_view then
-            local parent_path = file_chooser.item_table.parent_path
-            if parent_path then
-                file_chooser:changeToPath(parent_path)
-                return true
-            end
+        if exitVirtualFolderIfNeeded(file_chooser) then
+            return true
         end
         return old_onFolderUp(file_chooser)
+    end
+
+    -- Patch for ProjectTitle plugin (if loaded)
+    -- ProjectTitle has its own local onFolderUp function that we need to patch
+    local ok, CoverMenu = pcall(require, "covermenu")
+    if ok and CoverMenu and CoverMenu.setupLayout then
+        local orig_onFolderUp, onFolderUp_idx = userpatch.getUpValue(CoverMenu.setupLayout, "onFolderUp")
+        if orig_onFolderUp then
+            local new_onFolderUp = function()
+                local file_chooser = FileManager.instance and FileManager.instance.file_chooser
+                if not exitVirtualFolderIfNeeded(file_chooser) then
+                    orig_onFolderUp()
+                end
+            end
+            userpatch.replaceUpValue(CoverMenu.setupLayout, onFolderUp_idx, new_onFolderUp)
+            logger.dbg("AutomaticSeries: Patched ProjectTitle onFolderUp")
+        end
     end
     
     -- Override onMenuSelect to handle series group clicks
@@ -532,4 +556,4 @@ local function patchCoverBrowser(plugin)
     end
 end
 
-userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+userpatch.registerPatchPluginFunc("coverbrowser", automaticSeriesPatch)
