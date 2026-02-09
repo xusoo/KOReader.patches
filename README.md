@@ -18,7 +18,8 @@ A patch that automatically groups books belonging to the same series into virtua
 ### Features
 - **Virtual Grouping**: Instead of seeing 10+ books scattered in a folder, you'll see a single virtual folder for the series (e.g., "Harry Potter").
 - **Seamless Integration**: Works directly in your existing folder structure. No need to reorganize your files or use Calibre.
-- **Smart Sorting**: Books inside the virtual folder show their series index and are sorted automatically.
+- **Automatic Sorting**: Books inside the virtual folder are sorted automatically by their series index.
+- **Smart Skipping**: Single books from a series won't be grouped. If all books in a folder belong to the same series, grouping is skipped to avoid creating virtual folders inside your existing series folders.
 - **Toggleable**: Can be enabled/disabled via the File Browser menu.
 
 ### How to Use

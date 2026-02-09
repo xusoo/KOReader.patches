@@ -1,4 +1,19 @@
--- Automatic Series Grouping Patch
+--[[
+    Automatic Book Series v1.0.1
+
+    This patch automatically organizes your books into virtual folders based on 
+    book series. If you have multiple books that belong to the same series (e.g., 
+    "Harry Potter 1", "Harry Potter 2", etc.), they will be grouped together into 
+    a single folder with the series name, making it easier to find and browse 
+    related books. No need to use Calibre or create folders manually.
+
+    Note: If there's only one book from a series in the folder, it won't be grouped.
+    Also, if all books in the folder belong to the same series, grouping is skipped
+    to avoid creating virtual folders inside your existing series folders.
+
+    You can enable/disable this feature from the File Browser settings menu under "Group book series into folders".
+--]]
+
 local FileChooser = require("ui/widget/filechooser")
 local FileManager = require("apps/filemanager/filemanager")
 local TitleBar = require("ui/widget/titlebar")
