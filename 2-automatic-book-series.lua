@@ -35,9 +35,6 @@ local series_items_cache = {}
 -- State for persisting virtual folder across refreshes
 local current_series_group = nil
 
--- Flag to prevent duplicate menu items
-local menu_item_added = false
-
 local function automaticSeriesPatch(plugin)
     local MosaicMenu = require("mosaicmenu")
     local MosaicMenuItem = userpatch.getUpValue(MosaicMenu._updateItemsBuildUI, "MosaicMenuItem")
@@ -549,13 +546,16 @@ local function automaticSeriesPatch(plugin)
     function plugin:addToMainMenu(menu_items)
         orig_CoverBrowser_addToMainMenu(self, menu_items)
         
-        -- Prevent duplicate menu items
-        if menu_item_added then return end
-        
         -- Add to File browser settings
         if not menu_items.filebrowser_settings then return end
         
-        menu_item_added = true
+        -- Check if menu item already exists using custom attribute
+        for _, item in ipairs(menu_items.filebrowser_settings.sub_item_table) do
+            if item._automatic_series_menu_item then
+                return -- Already added
+            end
+        end
+        
         table.insert(menu_items.filebrowser_settings.sub_item_table, {
             text = _("Group book series into folders"),
             separator = true,
@@ -567,6 +567,7 @@ local function automaticSeriesPatch(plugin)
                     self.ui.file_chooser:refreshPath()
                 end
             end,
+            _automatic_series_menu_item = true, -- Marker to detect duplicate additions
         })
     end
 end
