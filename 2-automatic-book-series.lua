@@ -374,6 +374,8 @@ local function automaticSeriesPatch(plugin)
             series_name = group_item.text,
             parent_path = parent_path,
         }
+
+        logger.dbg("AutomaticSeries: Opening series:", group_item.text)
         
         -- Check if up-item already exists (from previous entry)
         local up_item_already_present = false
@@ -408,6 +410,11 @@ local function automaticSeriesPatch(plugin)
         if file_chooser and file_chooser.item_table and file_chooser.item_table.is_in_series_view then
             local parent_path = file_chooser.item_table.parent_path
             if parent_path then
+                logger.dbg("AutomaticSeries: Exiting virtual folder, returning to parent path:", parent_path)
+                -- Set a flag so updateItems knows to find and restore focus to the series group item after refresh
+                if current_series_group then
+                    current_series_group.should_restore_focus = true
+                end
                 file_chooser:changeToPath(parent_path)
                 return true
             end
@@ -503,15 +510,16 @@ local function automaticSeriesPatch(plugin)
     
     -- Override changeToPath to clear virtual folder state and redirect ".." navigation
     FileChooser.changeToPath = function(file_chooser, path, ...)
-        -- Any explicit navigation should exit the virtual folder state
-        current_series_group = nil
-
         -- If we're in a virtual series view and path contains "..", redirect to real parent
         if file_chooser.item_table and file_chooser.item_table.is_in_series_view then
             local parent_path = file_chooser.item_table.parent_path
             if parent_path and path and (path:match("/%.%.") or path:match("^%.%.")) then
                 path = parent_path
             end
+            -- Don't clear current_series_group when exiting virtual folder - updateItems needs it
+        else
+            -- Only clear for non-virtual-folder navigation
+            current_series_group = nil
         end
 
         return old_changeToPath(file_chooser, path, ...)
@@ -536,7 +544,33 @@ local function automaticSeriesPatch(plugin)
         
         logger.dbg("AutomaticSeries Patch: Grouping triggered for path", file_chooser.path)
         AutomaticSeries:processItemTable(file_chooser.item_table, file_chooser)
+        
+        -- After grouping, if we're returning from a virtual folder, find the series group
+        -- calculate the page and position, then call updateItems with that position
+        if current_series_group and current_series_group.should_restore_focus then
+            logger.dbg("AutomaticSeries: Looking for series to restore focus:", current_series_group.series_name)
+            for index, item in ipairs(file_chooser.item_table) do
+                if item.is_series_group and item.text == current_series_group.series_name then
+                    logger.dbg("AutomaticSeries: Found series group at index:", index)
+                    -- Calculate which page this index is on
+                    local page = math.ceil(index / file_chooser.perpage)
+                    -- Calculate position within that page (1-indexed)
+                    local select_number = ((index - 1) % file_chooser.perpage) + 1
+                    logger.dbg("AutomaticSeries: Calculated page:", page, "select_number:", select_number, "perpage:", file_chooser.perpage)
+                    -- Set the page
+                    file_chooser.page = page
+                    -- Store in path_items for consistency
+                    file_chooser.path_items[file_chooser.path] = index
+                    current_series_group = nil
+                    -- Call updateItems with only the select_number parameter
+                    return old_updateItems(file_chooser, select_number)
+                end
+            end
+        end
 
+        current_series_group = nil
+
+        -- Call original updateItems
         return old_updateItems(file_chooser, ...)
     end
     
