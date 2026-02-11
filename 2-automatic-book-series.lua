@@ -1,5 +1,5 @@
 --[[
-    Automatic Book Series v1.0.2
+    Automatic Book Series v1.0.3
 
     This patch automatically organizes your books into virtual folders based on 
     book series. If you have multiple books that belong to the same series (e.g., 
@@ -14,6 +14,7 @@
     You can enable/disable this feature from the File Browser settings menu under "Group book series into folders".
 --]]
 
+local BD = require("ui/bidi")
 local FileChooser = require("ui/widget/filechooser")
 local FileManager = require("apps/filemanager/filemanager")
 local TitleBar = require("ui/widget/titlebar")
@@ -25,8 +26,11 @@ local util = require("util")
 
 logger.dbg("AutomaticSeries Patch: Loading...")
 
-local up_folder_visible = false
-local up_folder_text = "../"
+-- Icon constants for browser-up-folder compatibility
+local Icon = {
+    home = "home",
+    up = BD.mirroredUILayout() and "back.top.rtl" or "back.top",
+}
 
 -- Global cache mapping virtual series folder paths to their book items
 -- This allows the ProjectTitle plugin to find books for folder cover rendering
@@ -34,6 +38,9 @@ local series_items_cache = {}
 
 -- State for persisting virtual folder across refreshes
 local current_series_group = nil
+
+-- Cache the ProjectTitle enabled state to avoid repeated settings checks
+local is_projecttitle_enabled = nil
 
 local function automaticSeriesPatch(plugin)
     local MosaicMenu = require("mosaicmenu")
@@ -46,7 +53,24 @@ local function automaticSeriesPatch(plugin)
         return
     end
     
-    logger.warn("AutomaticSeries Patch: Initialized with BookInfoManager")
+    logger.dbg("AutomaticSeries Patch: Initialized with BookInfoManager")
+    
+    -- Check if ProjectTitle is enabled by checking if coverbrowser plugin is disabled (ProjectTitle replaces it)
+    local function isProjectTitleEnabled()
+        if is_projecttitle_enabled ~= nil then
+            return is_projecttitle_enabled
+        end
+        
+        local plugins_disabled = G_reader_settings:readSetting("plugins_disabled")
+        if type(plugins_disabled) == "table" and plugins_disabled["coverbrowser"] then
+            logger.dbg("AutomaticSeries: ProjectTitle enabled (coverbrowser disabled)")
+            is_projecttitle_enabled = true
+            return true
+        end
+        
+        logger.dbg("AutomaticSeries: ProjectTitle not detected (coverbrowser enabled)")
+        return false
+    end
     
     -- Settings
     local setting_name = "automatic_series_grouping_enabled"
@@ -108,58 +132,60 @@ local function automaticSeriesPatch(plugin)
     
     -- Hook ptutil.getSubfolderCoverImages for ProjectTitle plugin compatibility
     -- This allows virtual series folders to display book covers
-    local ok, ptutil = pcall(require, "ptutil")
-    if ok and ptutil and ptutil.getSubfolderCoverImages then
-        -- Get the internal helper functions from ptutil using upvalues
-        local build_cover_images = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_cover_images")
-        local build_diagonal_stack = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_diagonal_stack")
-        local build_grid = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_grid")
-        
-        if build_cover_images and (build_diagonal_stack or build_grid) then
-            local original_getSubfolderCoverImages = ptutil.getSubfolderCoverImages
-            ptutil.getSubfolderCoverImages = function(filepath, max_w, max_h)
-                -- Check if this is a virtual series folder path
-                local series_items = series_items_cache[filepath]
-                if series_items and #series_items > 0 then
-                    -- Format our series items to look like the database result
-                    -- db_res format: { [1] = directories, [2] = filenames }
-                    local directories = {}
-                    local filenames = {}
-                    for _, book_item in ipairs(series_items) do
-                        if book_item.path then
-                            local dir = book_item.path:match("(.*/)")
-                            local fname = book_item.path:match("([^/]+)$")
-                            if dir and fname then
-                                table.insert(directories, dir)
-                                table.insert(filenames, fname)
+    if isProjectTitleEnabled() then
+        local ok, ptutil = pcall(require, "ptutil")
+        if ok and ptutil and ptutil.getSubfolderCoverImages then
+            -- Get the internal helper functions from ptutil using upvalues
+            local build_cover_images = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_cover_images")
+            local build_diagonal_stack = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_diagonal_stack")
+            local build_grid = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_grid")
+            
+            if build_cover_images and (build_diagonal_stack or build_grid) then
+                local original_getSubfolderCoverImages = ptutil.getSubfolderCoverImages
+                ptutil.getSubfolderCoverImages = function(filepath, max_w, max_h)
+                    -- Check if this is a virtual series folder path
+                    local series_items = series_items_cache[filepath]
+                    if series_items and #series_items > 0 then
+                        -- Format our series items to look like the database result
+                        -- db_res format: { [1] = directories, [2] = filenames }
+                        local directories = {}
+                        local filenames = {}
+                        for _, book_item in ipairs(series_items) do
+                            if book_item.path then
+                                local dir = book_item.path:match("(.*/)")
+                                local fname = book_item.path:match("([^/]+)$")
+                                if dir and fname then
+                                    table.insert(directories, dir)
+                                    table.insert(filenames, fname)
+                                end
+                            end
+                        end
+                        
+                        if #filenames > 0 then
+                            local db_res = { directories, filenames }
+                            local images = build_cover_images(db_res, max_w, max_h)
+                            
+                            if #images > 0 then
+                                -- Use the same display logic as ptutil.getSubfolderCoverImages
+                                if BookInfoManager:getSetting("use_stacked_foldercovers") and build_diagonal_stack then
+                                    return build_diagonal_stack(images, max_w, max_h)
+                                elseif build_grid then
+                                    return build_grid(images, max_w, max_h)
+                                end
                             end
                         end
                     end
                     
-                    if #filenames > 0 then
-                        local db_res = { directories, filenames }
-                        local images = build_cover_images(db_res, max_w, max_h)
-                        
-                        if #images > 0 then
-                            -- Use the same display logic as ptutil.getSubfolderCoverImages
-                            if BookInfoManager:getSetting("use_stacked_foldercovers") and build_diagonal_stack then
-                                return build_diagonal_stack(images, max_w, max_h)
-                            elseif build_grid then
-                                return build_grid(images, max_w, max_h)
-                            end
-                        end
-                    end
+                    -- Fall back to original function for real folders
+                    return original_getSubfolderCoverImages(filepath, max_w, max_h)
                 end
-                
-                -- Fall back to original function for real folders
-                return original_getSubfolderCoverImages(filepath, max_w, max_h)
+                logger.dbg("AutomaticSeries: Hooked ptutil.getSubfolderCoverImages for ProjectTitle compatibility")
+            else
+                logger.warn("AutomaticSeries: Could not get ptutil helper functions, ProjectTitle cover hook not installed")
             end
-            logger.dbg("AutomaticSeries: Hooked ptutil.getSubfolderCoverImages for ProjectTitle compatibility")
-        else
-            logger.warn("AutomaticSeries: Could not get ptutil helper functions, ProjectTitle cover hook not installed")
         end
     end
-    
+
     -- Local logic container
     local AutomaticSeries = {
         BookInfoManager = BookInfoManager,
@@ -186,13 +212,9 @@ local function automaticSeriesPatch(plugin)
         local book_count = 0
         local non_series_book_count = 0
         
-        up_folder_visible = false
-        
         for _, item in ipairs(item_table) do
-            -- Handle "go up" items
+            -- Handle "go up" items - skip them, we handle navigation separately
             if item.is_go_up then
-                up_folder_visible = true
-                up_folder_text = item.text
                 table.insert(processed_list, item)
             else
                 -- Ensure safe sort properties for ALL items (files and directories)
@@ -377,7 +399,7 @@ local function automaticSeriesPatch(plugin)
 
         logger.dbg("AutomaticSeries: Opening series:", group_item.text)
         
-        -- Check if up-item already exists (from previous entry)
+        -- Check if go-up item already exists (from previous entry into this series)
         local up_item_already_present = false
         for _, item in ipairs(items) do
             if item.is_go_up then
@@ -386,15 +408,27 @@ local function automaticSeriesPatch(plugin)
             end
         end
         
-        if up_folder_visible and not up_item_already_present then
-            -- Create a go-up item pointing to the real parent
+        -- Check if browser-up-folder extension is hiding the up item
+        local hide_up_folder = G_reader_settings:readSetting("filemanager_hide_up_folder", false)
+        
+        -- Also hide go-up item if ProjectTitle plugin is enabled (it has its own menubar button)
+        if not hide_up_folder and isProjectTitleEnabled() then
+            hide_up_folder = true
+        end
+        
+        -- Always add go-up item in virtual folders if not already present
+        -- (regardless of whether parent folder had one - virtual folders always need navigation)
+        if not up_item_already_present then
             local up_item = {
-                text = up_folder_text,
+                text = BD.mirroredUILayout() and BD.ltr("../ \u{2B06}") or "\u{2B06} ../",
                 is_directory = true,
                 path = parent_path,
                 is_go_up = true,
             }
-            table.insert(items, 1, up_item)
+            -- Only add to items list if browser-up-folder is NOT hiding them
+            if not hide_up_folder then
+                table.insert(items, 1, up_item)
+            end
         end
         
         -- Tag this table as a virtual series view
@@ -403,6 +437,11 @@ local function automaticSeriesPatch(plugin)
        
         -- Switch view
         file_chooser:switchItemTable(nil, items, nil, nil, group_item.text)
+        
+        -- If browser-up-folder extension is hiding the go-up item, show the back icon in toolbar
+        if hide_up_folder and file_chooser._changeLeftIcon then
+            file_chooser:_changeLeftIcon(Icon.up, function() file_chooser:onFolderUp() end)
+        end
     end
     
     -- Helper: Exit virtual folder if currently in one. Returns true if handled.
@@ -441,11 +480,11 @@ local function automaticSeriesPatch(plugin)
     local old_refreshPath = FileChooser.refreshPath
     local old_goHome = FileChooser.goHome
 
-    -- Hook goHome to handle Home button when inside virtual folder
+    -- Hook goHome to set focus restoration flag when leaving virtual folder
     FileChooser.goHome = function(file_chooser)
-        -- If we're in a virtual series view, exit it first
-        if exitVirtualFolderIfNeeded(file_chooser) then
-            return true
+        -- If we're in a virtual series view, set flag to restore focus
+        if file_chooser.item_table and file_chooser.item_table.is_in_series_view and current_series_group then
+            current_series_group.should_restore_focus = true
         end
         return old_goHome(file_chooser)
     end
@@ -482,18 +521,20 @@ local function automaticSeriesPatch(plugin)
 
     -- Patch for ProjectTitle plugin (if loaded)
     -- ProjectTitle has its own local onFolderUp function that we need to patch
-    local ok, CoverMenu = pcall(require, "covermenu")
-    if ok and CoverMenu and CoverMenu.setupLayout then
-        local orig_onFolderUp, onFolderUp_idx = userpatch.getUpValue(CoverMenu.setupLayout, "onFolderUp")
-        if orig_onFolderUp then
-            local new_onFolderUp = function()
-                local file_chooser = FileManager.instance and FileManager.instance.file_chooser
-                if not exitVirtualFolderIfNeeded(file_chooser) then
-                    orig_onFolderUp()
+    if isProjectTitleEnabled() then
+        local ok, CoverMenu = pcall(require, "covermenu")
+        if ok and CoverMenu and CoverMenu.setupLayout then
+            local orig_onFolderUp, onFolderUp_idx = userpatch.getUpValue(CoverMenu.setupLayout, "onFolderUp")
+            if orig_onFolderUp then
+                local new_onFolderUp = function()
+                    local file_chooser = FileManager.instance and FileManager.instance.file_chooser
+                    if not exitVirtualFolderIfNeeded(file_chooser) then
+                        orig_onFolderUp()
+                    end
                 end
+                userpatch.replaceUpValue(CoverMenu.setupLayout, onFolderUp_idx, new_onFolderUp)
+                logger.dbg("AutomaticSeries: Patched ProjectTitle onFolderUp")
             end
-            userpatch.replaceUpValue(CoverMenu.setupLayout, onFolderUp_idx, new_onFolderUp)
-            logger.dbg("AutomaticSeries: Patched ProjectTitle onFolderUp")
         end
     end
     
@@ -515,6 +556,10 @@ local function automaticSeriesPatch(plugin)
             local parent_path = file_chooser.item_table.parent_path
             if parent_path and path and (path:match("/%.%.") or path:match("^%.%.")) then
                 path = parent_path
+            end
+            -- Set flag to restore focus to the series group item
+            if current_series_group then
+                current_series_group.should_restore_focus = true
             end
             -- Don't clear current_series_group when exiting virtual folder - updateItems needs it
         else
