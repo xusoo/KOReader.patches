@@ -22,7 +22,6 @@ local TitleBar = require("ui/widget/titlebar")
 local logger = require("logger")
 local userpatch = require("userpatch")
 local _ = require("gettext")
-local util = require("util")
 
 logger.dbg("AutomaticSeries Patch: Loading...")
 
@@ -186,14 +185,20 @@ local function automaticSeriesPatch(plugin)
         end
     end
 
+    -- Helper: check if item is a directory
+    local function isDirectory(item)
+        return item.is_directory or (item.attr and item.attr.mode == "directory") or item.mode == "directory"
+    end
+    
     -- Local logic container
-    local AutomaticSeries = {
-        BookInfoManager = BookInfoManager,
-    }
+    local AutomaticSeries = {}
     
     function AutomaticSeries:processItemTable(item_table, file_chooser)
         -- Defensive check
         if not file_chooser or not item_table then return end
+        
+        -- Skip grouping in folder chooser dialogs
+        if file_chooser.show_current_dir_for_hold then return end
 
         logger.dbg("AutomaticSeries: Processing Items")
         
@@ -227,7 +232,7 @@ local function automaticSeriesPatch(plugin)
                 
                 if is_file and item.path then
                     book_count = book_count + 1
-                    local info = self.BookInfoManager:getBookInfo(item.path)
+                    local info = BookInfoManager:getBookInfo(item.path)
                     if info and info.series then
                         local s_name = info.series
                         -- Cache series_index on item to avoid repeated getBookInfo calls during sorting
@@ -355,7 +360,7 @@ local function automaticSeriesPatch(plugin)
             for _, item in ipairs(processed_list) do
                 if item.is_go_up then
                     up_item = item
-                elseif item.is_directory or (item.attr and item.attr.mode == "directory") or item.mode == "directory" then
+                elseif isDirectory(item) then
                     table.insert(dirs, item)
                 else
                     table.insert(files, item)
