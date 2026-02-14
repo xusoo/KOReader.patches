@@ -1,5 +1,5 @@
 --[[
-    Automatic Book Series v1.0.3
+    Automatic Book Series v1.0.5
 
     This patch automatically organizes your books into virtual folders based on 
     book series. If you have multiple books that belong to the same series (e.g., 
@@ -111,7 +111,7 @@ local function automaticSeriesPatch(plugin)
                             and bookinfo.cover_bb 
                             and bookinfo.has_cover 
                             and bookinfo.cover_fetched 
-                            and not bookinfo.ignore_cover 
+                            and not bookinfo.ignore_cover
                             and not BookInfoManager.isCachedCoverInvalid(bookinfo, self.menu.cover_specs) then
                             -- Use the _setFolderCover function from the folder-cover patch
                             if self._setFolderCover then
@@ -151,11 +151,17 @@ local function automaticSeriesPatch(plugin)
                         local filenames = {}
                         for _, book_item in ipairs(series_items) do
                             if book_item.path then
-                                local dir = book_item.path:match("(.*/)")
-                                local fname = book_item.path:match("([^/]+)$")
-                                if dir and fname then
-                                    table.insert(directories, dir)
-                                    table.insert(filenames, fname)
+                                -- Only include books with valid cover data
+                                -- Pass false for get_cover: we only need the flags, not the actual cover blob
+                                local bookinfo = BookInfoManager:getBookInfo(book_item.path, false)
+                                if bookinfo and bookinfo.has_cover and bookinfo.cover_fetched 
+                                   and not bookinfo.ignore_cover then
+                                    local dir = book_item.path:match("(.*/)")
+                                    local fname = book_item.path:match("([^/]+)$")
+                                    if dir and fname then
+                                        table.insert(directories, dir)
+                                        table.insert(filenames, fname)
+                                    end
                                 end
                             end
                         end
@@ -232,15 +238,18 @@ local function automaticSeriesPatch(plugin)
                 
                 if is_file and item.path then
                     book_count = book_count + 1
-                    local info = BookInfoManager:getBookInfo(item.path)
-                    if info and info.series then
-                        local s_name = info.series
-                        -- Cache series_index on item to avoid repeated getBookInfo calls during sorting
-                        item._series_index = info.series_index or 0
+
+                    local doc_props = item.doc_props or BookInfoManager:getDocProps(item.path)
+                    -- Filter out "\u{FFFF}" sentinel used by series/authors/keywords collates for nil values
+                    if doc_props and doc_props.series and doc_props.series ~= "\u{FFFF}" then
+                        series_name = doc_props.series
+
+                        -- Cache series_index on item to avoid repeated calls during sorting
+                        item._series_index = doc_props.series_index or 0
                         
-                        if not series_map[s_name] then
+                        if not series_map[series_name] then
                             -- New Series Group
-                            logger.dbg("AutomaticSeries: Found series", info.series)
+                            logger.dbg("AutomaticSeries: Found series", series_name)
                             
                             -- Shallow copy attributes
                             local group_attr = {}
@@ -250,11 +259,11 @@ local function automaticSeriesPatch(plugin)
                             group_attr.mode = "directory" 
     
                             local group_item = {
-                                text = s_name,
+                                text = series_name,
                                 is_file = false,
                                 is_directory = true,
                                 -- Fake path, but keep base path of first item
-                                path = (item.path:match("(.*/)") or item.path) .. s_name, 
+                                path = (item.path:match("(.*/)") or item.path) .. series_name, 
                                 is_series_group = true,
                                 series_items = { item },
                                 attr = group_attr,
@@ -265,20 +274,20 @@ local function automaticSeriesPatch(plugin)
                                 opened = item.opened,
                                 -- Ensure doc_props exists for sorting - use item's or create minimal one
                                 doc_props = item.doc_props or {
-                                    series = s_name,
+                                    series = series_name,
                                     series_index = 0,
-                                    display_title = s_name,
+                                    display_title = series_name,
                                 },
                                 suffix = item.suffix,
                             }
                             -- Cache this group
-                            series_map[s_name] = group_item
+                            series_map[series_name] = group_item
                             table.insert(processed_list, group_item)
                             -- Store the list index to allow replacement if ungrouping needed
                             group_item._list_index = #processed_list
                         else
                             -- Existing Series Group
-                            table.insert(series_map[s_name].series_items, item)
+                            table.insert(series_map[series_name].series_items, item)
                         end
                         series_handled = true
                     else
@@ -404,14 +413,8 @@ local function automaticSeriesPatch(plugin)
 
         logger.dbg("AutomaticSeries: Opening series:", group_item.text)
         
-        -- Check if go-up item already exists (from previous entry into this series)
-        local up_item_already_present = false
-        for _, item in ipairs(items) do
-            if item.is_go_up then
-                up_item_already_present = true
-                break
-            end
-        end
+        -- Check if go-up item already exists (always at position 1 if present)
+        local up_item_already_present = items[1] and items[1].is_go_up
         
         -- Check if browser-up-folder extension is hiding the up item
         local hide_up_folder = G_reader_settings:readSetting("filemanager_hide_up_folder", false)
@@ -484,33 +487,48 @@ local function automaticSeriesPatch(plugin)
     local old_changeToPath = FileChooser.changeToPath
     local old_refreshPath = FileChooser.refreshPath
     local old_goHome = FileChooser.goHome
+    local old_switchItemTable = FileChooser.switchItemTable
 
-    -- Hook goHome to set focus restoration flag when leaving virtual folder
+    -- Hook switchItemTable to process items BEFORE the original searches for itemmatch
+    -- This ensures the correct page is calculated after grouping
+    FileChooser.switchItemTable = function(file_chooser, new_title, new_item_table, itemnumber, itemmatch, new_subtitle)
+        if isEnabled() and new_item_table and not new_item_table.is_in_series_view then
+            AutomaticSeries:processItemTable(new_item_table, file_chooser)
+        end
+        
+        return old_switchItemTable(file_chooser, new_title, new_item_table, itemnumber, itemmatch, new_subtitle)
+    end
+    
+    -- Hook goHome to handle virtual folder exit properly
     FileChooser.goHome = function(file_chooser)
-        -- If we're in a virtual series view, set flag to restore focus
-        if file_chooser.item_table and file_chooser.item_table.is_in_series_view and current_series_group then
-            current_series_group.should_restore_focus = true
+        -- If we're in a virtual series view, exit it first with proper focus restoration
+        if file_chooser.item_table and file_chooser.item_table.is_in_series_view then            
+            if current_series_group then
+                current_series_group.should_restore_focus = true
+            end
+
+            local parent_path = file_chooser.item_table.parent_path
+            local home_dir = G_reader_settings:readSetting("home_dir") or require("device").home_dir
+
+            -- If parent was home, just exit virtual folder (don't let original goHome go to page 1)
+            if parent_path and home_dir and parent_path == home_dir then
+                file_chooser:changeToPath(parent_path)
+                return true
+            end
         end
         return old_goHome(file_chooser)
     end
     
-    -- Hook refreshPath to detect returning from a book
+    -- Hook refreshPath to re-enter virtual folder after refresh (returning from book, sort change, etc.)
     FileChooser.refreshPath = function(file_chooser)
-        -- Capture focused_path before the original clears it
-        local book_path = file_chooser.focused_path
-        
-        -- Call original (which clears focused_path and loads items)
         old_refreshPath(file_chooser)
-        
-        -- After refresh, check if we should open a series group
-        if isEnabled() and book_path and current_series_group then
-            local bookinfo = BookInfoManager:getBookInfo(book_path)
-            if bookinfo and bookinfo.series then
-                for _, item in ipairs(file_chooser.item_table) do
-                    if item.is_series_group and item.text == bookinfo.series then
-                        AutomaticSeries:openSeriesGroup(file_chooser, item)
-                        break
-                    end
+        -- Re-enter the virtual series folder if we were in one
+        if isEnabled() and current_series_group then
+            local series_name = current_series_group.series_name
+            for _, item in ipairs(file_chooser.item_table) do
+                if item.is_series_group and item.text == series_name then
+                    AutomaticSeries:openSeriesGroup(file_chooser, item)
+                    break
                 end
             end
         end
@@ -576,13 +594,11 @@ local function automaticSeriesPatch(plugin)
     end
     
     FileChooser.updateItems = function(file_chooser, ...)
-        -- Check if enabled
         if not isEnabled() then
             current_series_group = nil
             return old_updateItems(file_chooser, ...)
         end
         
-        -- Check trigger conditions early
         if not file_chooser.item_table or #file_chooser.item_table == 0 then
             return old_updateItems(file_chooser, ...)
         end
@@ -591,36 +607,24 @@ local function automaticSeriesPatch(plugin)
         if file_chooser.item_table.is_in_series_view then
             return old_updateItems(file_chooser, ...)
         end
-        
-        logger.dbg("AutomaticSeries Patch: Grouping triggered for path", file_chooser.path)
-        AutomaticSeries:processItemTable(file_chooser.item_table, file_chooser)
-        
-        -- After grouping, if we're returning from a virtual folder, find the series group
-        -- calculate the page and position, then call updateItems with that position
-        if current_series_group and current_series_group.should_restore_focus then
+        -- Handle focus restoration when returning to parent after exiting virtual folder
+        if current_series_group and current_series_group.should_restore_focus
+           and file_chooser.item_table and #file_chooser.item_table > 0 then
             logger.dbg("AutomaticSeries: Looking for series to restore focus:", current_series_group.series_name)
             for index, item in ipairs(file_chooser.item_table) do
                 if item.is_series_group and item.text == current_series_group.series_name then
                     logger.dbg("AutomaticSeries: Found series group at index:", index)
-                    -- Calculate which page this index is on
                     local page = math.ceil(index / file_chooser.perpage)
-                    -- Calculate position within that page (1-indexed)
                     local select_number = ((index - 1) % file_chooser.perpage) + 1
-                    logger.dbg("AutomaticSeries: Calculated page:", page, "select_number:", select_number, "perpage:", file_chooser.perpage)
-                    -- Set the page
                     file_chooser.page = page
-                    -- Store in path_items for consistency
                     file_chooser.path_items[file_chooser.path] = index
                     current_series_group = nil
-                    -- Call updateItems with only the select_number parameter
                     return old_updateItems(file_chooser, select_number)
                 end
             end
+            current_series_group = nil
         end
-
-        current_series_group = nil
-
-        -- Call original updateItems
+        
         return old_updateItems(file_chooser, ...)
     end
     
