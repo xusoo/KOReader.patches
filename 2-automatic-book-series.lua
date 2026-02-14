@@ -416,8 +416,10 @@ local function automaticSeriesPatch(plugin)
         -- Check if go-up item already exists (always at position 1 if present)
         local up_item_already_present = items[1] and items[1].is_go_up
         
-        -- Check if browser-up-folder extension is hiding the up item
-        local hide_up_folder = G_reader_settings:readSetting("filemanager_hide_up_folder", false)
+        -- Check if browser-up-folder extension provides a toolbar back button
+        -- Only respect hide_up_folder setting if _changeLeftIcon exists (the extension is loaded)
+        local is_browser_up_folder_enabled = file_chooser._changeLeftIcon ~= nil and G_reader_settings:readSetting("filemanager_hide_up_folder", false)
+        local hide_up_folder = is_browser_up_folder_enabled
         
         -- Also hide go-up item if ProjectTitle plugin is enabled (it has its own menubar button)
         if not hide_up_folder and isProjectTitleEnabled() then
@@ -447,7 +449,7 @@ local function automaticSeriesPatch(plugin)
         file_chooser:switchItemTable(nil, items, nil, nil, group_item.text)
         
         -- If browser-up-folder extension is hiding the go-up item, show the back icon in toolbar
-        if hide_up_folder and file_chooser._changeLeftIcon then
+        if is_browser_up_folder_enabled and not isProjectTitleEnabled() then
             file_chooser:_changeLeftIcon(Icon.up, function() file_chooser:onFolderUp() end)
         end
     end
