@@ -35,3 +35,30 @@ This patch is designed to work harmoniously with other popular plugins and patch
 - **ProjectTitle / CoverBrowser**: Fully compatible. Virtual series folders will display cover images (either grid or stack) generated from the books inside them.
 - **browser-folder-cover patch**: Supported. The virtual folder icon will display the number of books it contains (e.g., "7 📁").
 - **browser-up-folder patch**: Supported. If you use a patch to hide/show the `../` (up) item, this patch respects that setting inside virtual folders.
+
+### Release Notes
+
+**v1.0.4 (Current)**
+- Improved performance when browsing folders with many books
+- Improved compatibility with browser-up-folder extension
+- Fixed: Page position is now properly restored when navigating folders or returning from a book
+- Series grouping no longer appears in folder selection dialogs
+- Various code optimizations and bug fixes
+
+**v1.0.3**
+- Improved detection of ProjectTitle plugin
+- Fixed some issues with the go-up/home buttons not remembering the page number
+
+**v1.0.2**
+- Fixed crash when displaying covers for certain books
+- Series folders now properly reopen after reading a book
+
+**v1.0.1**
+- Prevent crashes from books with missing metadata
+- Avoid grouping if only one book of the series exists
+- Don't group series inside existing series folders
+
+**v1.0.0**
+- Initial release
+- Automatically groups books into virtual series folders
+- Works with both default and ProjectTitle cover browsers

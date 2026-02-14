@@ -1,5 +1,5 @@
 --[[
-    Automatic Book Series v1.0.5
+    Automatic Book Series v1.0.4
 
     This patch automatically organizes your books into virtual folders based on 
     book series. If you have multiple books that belong to the same series (e.g., 
