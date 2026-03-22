@@ -38,7 +38,10 @@ This patch is designed to work harmoniously with other popular plugins and patch
 
 ### Release Notes
 
-**v1.0.4 (Current)**
+**v1.0.5 (Current)**
+- Fixed virtual folder covers not displaying with newer versions of ProjectTitle
+
+**v1.0.4**
 - Improved performance when browsing folders with many books
 - Improved compatibility with browser-up-folder extension
 - Fixed: Page position is now properly restored when navigating folders or returning from a book

@@ -1,5 +1,5 @@
 --[[
-    Automatic Book Series v1.0.4
+    Automatic Book Series v1.0.5
 
     This patch automatically organizes your books into virtual folders based on 
     book series. If you have multiple books that belong to the same series (e.g., 
@@ -134,10 +134,13 @@ local function automaticSeriesPatch(plugin)
     if isProjectTitleEnabled() then
         local ok, ptutil = pcall(require, "ptutil")
         if ok and ptutil and ptutil.getSubfolderCoverImages then
-            -- Get the internal helper functions from ptutil using upvalues
-            local build_cover_images = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_cover_images")
-            local build_diagonal_stack = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_diagonal_stack")
-            local build_grid = userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_grid")
+            -- New versions expose these as module-level functions; old versions had them as upvalues
+            local build_cover_images = ptutil.build_cover_images
+                or userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_cover_images")
+            local build_diagonal_stack = ptutil.build_diagonal_stack
+                or userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_diagonal_stack")
+            local build_grid = ptutil.build_grid
+                or userpatch.getUpValue(ptutil.getSubfolderCoverImages, "build_grid")
             
             if build_cover_images and (build_diagonal_stack or build_grid) then
                 local original_getSubfolderCoverImages = ptutil.getSubfolderCoverImages
