@@ -65,3 +65,8 @@ This patch is designed to work harmoniously with other popular plugins and patch
 - Initial release
 - Automatically groups books into virtual series folders
 - Works with both default and ProjectTitle cover browsers
+
+
+<a href="https://www.buymeacoffee.com/xuso" target="_blank" rel="noreferrer">
+   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" />
+</a>
