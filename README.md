@@ -19,7 +19,7 @@ This repository contains custom patches for [KOReader](https://github.com/koread
 
 A patch that automatically groups books belonging to the same series into virtual folders within the File Browser.
 
-![](https://i.imgur.com/Jzph3mT.png)
+![](2-automatic-book-series.png)
 
 ### Features
 - **Virtual Grouping**: Instead of seeing 10+ books scattered in a folder, you'll see a single virtual folder for the series (e.g., "Harry Potter").
