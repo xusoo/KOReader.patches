@@ -85,6 +85,7 @@ A patch that remembers the furthest page you've actually read in a book, and off
 - **Adjustable Position**: "Bottom offset" and "Side offset" settings let you move the button further from the screen edges (useful to avoid overlapping other UI elements), applied identically to both docking corners, with a live preview while you adjust them.
 - **Dismiss or Accept**: Tap the "X" (or hold the button if it's hidden) to cancel the prompt and accept your current page as the new reference point.
 - **Menu & Gesture Access**: A "Go to furthest reading location" entry sits in the Reader menu under Navigation (right below "Go forward to next location"). It's also registered as a system action, so it can be bound to a gesture via the gesture manager, and is available anywhere else KOReader exposes registered actions - e.g. the Bookshelf quick menu, [Shortcuts Toolbar](https://github.com/xusoo/shortcutstoolbar.koplugin), and similar plugins.
+- **Set Current Page On Demand**: A second, standalone "Set current page as reading location" system action lets you accept your current page as the new reference point at any time - via gesture, profile, etc. - without needing an active "go back" prompt to dismiss first.
 - **Persistent Per-Book**: The reference page is saved per book, so a pending prompt is still there if you close the book and reopen it later.
 - **Universal**: Works with both paginated documents (PDF, CBZ, DjVu...) and reflowable documents (EPUB, FB2...).
 
@@ -96,5 +97,8 @@ A patch that remembers the furthest page you've actually read in a book, and off
 
 ### Release Notes
 
-**v1.0.0 (Current)**
+**v1.1.0 (Current)**
+- Added a standalone "Set current page as reading location" system action, so the current page can be accepted as the new reference point without needing an active "go back" prompt to dismiss first
+
+**v1.0.0**
 - Initial release

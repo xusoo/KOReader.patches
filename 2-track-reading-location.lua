@@ -1,5 +1,5 @@
 --[[
-    Track Reading Location v1.0.0
+    Track Reading Location v1.1.0
 
     This patch remembers the last "confirmed" reading position (the furthest page
     you've actually read) for the book you're currently reading.
@@ -39,6 +39,12 @@
     the three display checkboxes described above, and "Bottom offset"/"Side
     offset" settings to adjust how far the button is docked from the bottom
     and side edges of the screen (applied the same way to both corners).
+
+    A second, standalone "Set current page as reading location" action is
+    also registered as a system action (gesture manager, profiles, etc. -
+    it has no menu entry of its own). It accepts the current page as the new
+    reference point on demand - the same thing tapping/holding the button's
+    "X" does - without needing an active prompt to dismiss first.
 
     The reference page is saved per book, so a pending prompt will still be there
     if you close the book and reopen it later.
@@ -693,6 +699,27 @@ function ReadingLocationTracker.onGoBack(ui)
     end
 end
 
+-- Standalone system action: accepts the current page as the new reference
+-- point on demand, regardless of whether the floating button is currently
+-- showing (unlike onCancel, which only ever runs from an active overlay tap/
+-- hold, where the button vanishing is already visible feedback). Shows a
+-- notification here instead, since there's otherwise no visible confirmation.
+function ReadingLocationTracker.setCurrentPageAsReadingLocation(ui)
+    if not ui or type(ui._rlt_current_page) ~= "number" then
+        return
+    end
+    local overlay = ui._rlt_overlay
+    local region = overlay and overlay.visible and overlay.box_dimen
+    ui._rlt_anchor = ui._rlt_current_page
+    if overlay then
+        overlay.visible = false
+    end
+    refreshRegion(ui, region)
+    UIManager:show(Notification:new{
+        text = _("Current page set as reading location."),
+    })
+end
+
 function ReadingLocationTracker.goToFurthestReadingLocation(ui)
     local anchor = ui._rlt_anchor
     if not anchor or anchor == ui._rlt_current_page then
@@ -1000,6 +1027,22 @@ Dispatcher:registerAction("go_to_furthest_reading_location", {
 
 ReaderUI.onGoToFurthestReadingLocation = function(self)
     ReadingLocationTracker.goToFurthestReadingLocation(self)
+    return true
+end
+
+-- Register as a second, standalone dispatchable action - not tied to any
+-- menu entry - so the current page can be accepted as the new reference
+-- point directly from a gesture, profile, or physical button, without first
+-- needing an active "go back" prompt to dismiss.
+Dispatcher:registerAction("set_current_page_as_reading_location", {
+    category = "none",
+    event = "SetCurrentPageAsReadingLocation",
+    title = _("Set current page as reading location"),
+    reader = true,
+})
+
+ReaderUI.onSetCurrentPageAsReadingLocation = function(self)
+    ReadingLocationTracker.setCurrentPageAsReadingLocation(self)
     return true
 end
 
