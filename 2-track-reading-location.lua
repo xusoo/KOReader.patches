@@ -39,9 +39,12 @@
     gesture via the gesture manager. Holding the same menu entry opens a
     settings submenu with a "Show button on screen" checkbox (to turn the
     floating button off entirely if you'd rather only use the menu/gesture),
-    the three display checkboxes described above, and "Bottom offset"/"Side
-    offset" settings to adjust how far the button is docked from the bottom
-    and side edges of the screen (applied the same way to both corners).
+    the three display checkboxes described above, a "Show shadow" checkbox
+    (toggles the button's drop shadow), "Bottom offset"/"Side offset"
+    settings to adjust how far the button is docked from the bottom and side
+    edges of the screen (applied the same way to both corners), and a
+    "Button radius" setting to adjust how rounded its corners are, from 0
+    (square) up to fully rounded (pill/circle, the default).
 
     A second, standalone "Set current page as reading location" action is
     also available, both as its own menu entry (right below "Go to furthest
@@ -104,6 +107,18 @@ local SETTING_MODE_PERCENTAGE = "readingloc_mode_percentage"
 local BUTTON_BASE_MARGIN = 14
 local SETTING_OFFSET_BOTTOM = "readingloc_offset_bottom"
 local SETTING_OFFSET_SIDE = "readingloc_offset_side"
+
+-- Whether the button casts a small drop shadow (see paintButtonShadow below).
+local SETTING_SHOW_SHADOW = "readingloc_show_shadow"
+
+-- Corner radius of the button, in unscaled px like the offset settings above.
+-- Defaults intentionally oversized - bb:paintRoundedRect/paintBorder already
+-- clamp radius down to at most half the button's own height/width, so a big
+-- default always resolves to a full pill, matching the button's original
+-- hardcoded look, while still leaving smaller values (down to 0, i.e. square
+-- corners) available to the settings submenu's spinner.
+local BUTTON_RADIUS_DEFAULT = 25
+local SETTING_BUTTON_RADIUS = "readingloc_button_radius"
 
 -- Forward-declared so ReadingLocationOverlay's methods (defined next) can already
 -- reference it by the time they're actually called at runtime.
@@ -177,10 +192,11 @@ function ReadingLocationOverlay:_getBox(side)
     local show_page_number = ReadingLocationTracker.isPageNumberEnabled()
     local show_dismiss = ReadingLocationTracker.isDismissButtonEnabled()
     local percentage_mode = ReadingLocationTracker.isPercentageModeEnabled()
+    local button_radius = ReadingLocationTracker.getButtonRadius()
     local key = table.concat({
         side, tostring(self.anchor),
         tostring(show_full_text), tostring(show_page_number), tostring(show_dismiss),
-        tostring(percentage_mode),
+        tostring(percentage_mode), tostring(button_radius),
     }, ":")
     if side == self._cached_side and self._box and self._box_key == key then
         return self._box
@@ -313,16 +329,44 @@ function ReadingLocationOverlay:_getButtonBox(side, show_full_text, show_page_nu
     return FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE,
         bordersize = Size.border.thin,
-        -- A generously large radius gets clamped down by paintRoundedRect/
-        -- paintBorder (see base/ffi/blitbuffer.lua) to exactly half the
-        -- button's own height, i.e. a pill shape - or a circle when the
-        -- content ends up about as wide as it is tall (e.g. arrow-only,
-        -- no text, no dismiss section).
-        radius = content:getSize().h,
+        -- The configured radius gets clamped down by paintRoundedRect/
+        -- paintBorder (see base/ffi/blitbuffer.lua) to at most half the
+        -- button's own height - so the default (BUTTON_RADIUS_DEFAULT,
+        -- intentionally oversized) always resolves to a pill shape, or a
+        -- circle when the content ends up about as wide as it is tall (e.g.
+        -- arrow-only, no text, no dismiss section), while a smaller value
+        -- from the settings submenu's spinner yields a less rounded button,
+        -- down to square corners at 0.
+        radius = Screen:scaleBySize(ReadingLocationTracker.getButtonRadius()),
         padding = 0,
         margin = 0,
         content,
     }
+end
+
+-- Shared by paintButtonShadow and growRegionForShadow below, so the
+-- refresh-region padding always matches how far the shadow is actually
+-- offset - drifting the two apart would leave a stale sliver of shadow on
+-- screen once the button's gone (see growRegionForShadow).
+local SHADOW_OFFSET = 2
+
+local function paintButtonShadow(bb, box_x, box_y, w, h, radius)
+    local offset = Screen:scaleBySize(SHADOW_OFFSET)
+    bb:paintRoundedRect(box_x, box_y + offset, w, h, Blitbuffer.COLOR_GRAY_9, radius)
+end
+
+-- The shadow pokes out a few pixels past the button's own bottom edge (see
+-- paintButtonShadow above) - a refresh region sized to just box_dimen would
+-- leave a stale sliver of it on screen once the button's gone, since e-ink
+-- only actually re-flashes whatever rect it's told to. Only grows downward,
+-- matching the shadow's own offset direction, and only when the shadow is
+-- actually enabled.
+local function growRegionForShadow(region)
+    if not region or not ReadingLocationTracker.isShadowEnabled() then
+        return region
+    end
+    local pad = Screen:scaleBySize(SHADOW_OFFSET)
+    return Geom:new{ x = region.x, y = region.y, w = region.w, h = region.h + pad }
 end
 
 -- Called by our ReaderView:paintTo hook on every page repaint.
@@ -378,6 +422,10 @@ function ReadingLocationOverlay:paintTo(bb, x, y)
             end
         end
 
+        local button_radius = Screen:scaleBySize(ReadingLocationTracker.getButtonRadius())
+        if ReadingLocationTracker.isShadowEnabled() then
+            paintButtonShadow(bb, box_x, box_y, w, h, button_radius)
+        end
         box:paintTo(bb, box_x, box_y)
 
         if self.preview_both_sides then
@@ -396,6 +444,9 @@ function ReadingLocationOverlay:paintTo(bb, x, y)
                 other_x = x + view_w - ow - margin_x
             end
             local other_y = y + view_h - oh - margin_y
+            if ReadingLocationTracker.isShadowEnabled() then
+                paintButtonShadow(bb, other_x, other_y, ow, oh, button_radius)
+            end
             other_box:paintTo(bb, other_x, other_y)
         end
     end)
@@ -565,6 +616,18 @@ function ReadingLocationTracker.setDismissButtonEnabled(enabled)
     G_reader_settings:saveSetting(SETTING_SHOW_DISMISS_BUTTON, enabled and true or false)
 end
 
+function ReadingLocationTracker.isShadowEnabled()
+    local v = G_reader_settings:readSetting(SETTING_SHOW_SHADOW)
+    if v == nil then
+        return true
+    end
+    return v == true
+end
+
+function ReadingLocationTracker.setShadowEnabled(enabled)
+    G_reader_settings:saveSetting(SETTING_SHOW_SHADOW, enabled and true or false)
+end
+
 function ReadingLocationTracker.isPercentageModeEnabled()
     local v = G_reader_settings:readSetting(SETTING_MODE_PERCENTAGE)
     if v == nil then
@@ -599,6 +662,18 @@ end
 
 function ReadingLocationTracker.setSideOffset(value)
     G_reader_settings:saveSetting(SETTING_OFFSET_SIDE, value)
+end
+
+function ReadingLocationTracker.getButtonRadius()
+    local v = G_reader_settings:readSetting(SETTING_BUTTON_RADIUS)
+    if type(v) ~= "number" then
+        return BUTTON_RADIUS_DEFAULT
+    end
+    return v
+end
+
+function ReadingLocationTracker.setButtonRadius(value)
+    G_reader_settings:saveSetting(SETTING_BUTTON_RADIUS, value)
 end
 
 -- Total distance the button is docked away from the bottom edge / from
@@ -662,7 +737,13 @@ end
 -- the change against the actual floating button as the value is dragged
 -- (not just once "Apply" is tapped), and reverting it if the widget is
 -- dismissed any other way (Cancel, tapping outside, the Back key).
-local function showOffsetSpinWidget(ui, touchmenu_instance, title, info, get_offset, set_offset)
+-- `opts` (optional) overrides the spinner's bounds/default - used for the
+-- button radius setting below, which needs a non-zero "reset" value (its
+-- default is intentionally oversized so it resolves to a full pill - see
+-- BUTTON_RADIUS_DEFAULT). Omitted entirely, this keeps its original 0-200,
+-- default-0 behavior for the two offset settings.
+local function showOffsetSpinWidget(ui, touchmenu_instance, title, info, get_offset, set_offset, opts)
+    opts = opts or {}
     local original_value = get_offset()
     local applied = false
     local spin_widget
@@ -670,12 +751,12 @@ local function showOffsetSpinWidget(ui, touchmenu_instance, title, info, get_off
         title_text = title,
         info_text = info,
         value = original_value,
-        value_min = 0,
-        value_max = 200,
-        value_step = 2,
-        value_hold_step = 10,
+        value_min = opts.value_min or 0,
+        value_max = opts.value_max or 200,
+        value_step = opts.value_step or 1,
+        value_hold_step = opts.value_hold_step or 10,
         unit = "px",
-        default_value = 0,
+        default_value = opts.default_value or 0,
         callback = function(spin)
             applied = true
             set_offset(spin.value)
@@ -718,7 +799,7 @@ end
 
 function ReadingLocationTracker.onCancel(ui)
     local overlay = ui._rlt_overlay
-    local region = overlay and overlay.box_dimen
+    local region = growRegionForShadow(overlay and overlay.box_dimen)
     -- Stop tracking the old position: accept wherever we currently are.
     ui._rlt_anchor = ui._rlt_current_page or ui._rlt_anchor
     if overlay then
@@ -729,7 +810,7 @@ end
 
 function ReadingLocationTracker.onGoBack(ui)
     local overlay = ui._rlt_overlay
-    local region = overlay and overlay.box_dimen
+    local region = growRegionForShadow(overlay and overlay.box_dimen)
     local target_page = ui._rlt_anchor
     if overlay then
         overlay.visible = false
@@ -750,7 +831,7 @@ function ReadingLocationTracker.setCurrentPageAsReadingLocation(ui)
         return
     end
     local overlay = ui._rlt_overlay
-    local region = overlay and overlay.visible and overlay.box_dimen
+    local region = overlay and overlay.visible and growRegionForShadow(overlay.box_dimen)
     ui._rlt_anchor = ui._rlt_current_page
     if overlay then
         overlay.visible = false
@@ -1037,6 +1118,16 @@ ReaderLink.addToMainMenu = function(self, menu_items)
                     end,
                 },
                 {
+                    text = _("Show shadow"),
+                    checked_func = function()
+                        return ReadingLocationTracker.isShadowEnabled()
+                    end,
+                    callback = function()
+                        ReadingLocationTracker.setShadowEnabled(not ReadingLocationTracker.isShadowEnabled())
+                        refreshFloatingButtonPreview(ui, ui._rlt_overlay and ui._rlt_overlay.visible)
+                    end,
+                },
+                {
                     text_func = function()
                         return T(_("Bottom offset: %1"), ReadingLocationTracker.getBottomOffset())
                     end,
@@ -1060,6 +1151,20 @@ ReaderLink.addToMainMenu = function(self, menu_items)
                             _("Extra distance the button is docked away from the left/right edge of the screen, whichever corner it's currently in. Applies to both corners."),
                             ReadingLocationTracker.getSideOffset,
                             ReadingLocationTracker.setSideOffset)
+                    end,
+                },
+                {
+                    text_func = function()
+                        return T(_("Button radius: %1"), ReadingLocationTracker.getButtonRadius())
+                    end,
+                    keep_menu_open = true,
+                    callback = function(touchmenu_instance)
+                        showOffsetSpinWidget(ui, touchmenu_instance,
+                            _("Button radius"),
+                            _("Corner roundness of the button, from 0 (square) up to fully rounded (pill/circle)."),
+                            ReadingLocationTracker.getButtonRadius,
+                            ReadingLocationTracker.setButtonRadius,
+                            { value_max = BUTTON_RADIUS_DEFAULT, default_value = BUTTON_RADIUS_DEFAULT })
                     end,
                 },
             }
