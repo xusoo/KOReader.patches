@@ -15,6 +15,9 @@
     - "Show full text": include the "Go back to page" wording.
     - "Show page number": include the page number next to the arrow.
     - "Show dismiss button": include a tappable "X" to cancel/dismiss.
+    - "Mode: Pages/Percentage": show the reference point as a page number
+      (default) or as a percentage of the book, both on the button and in
+      the "Go back to..." wording.
 
     With everything off, the button shrinks to just a small circular arrow.
 
@@ -89,6 +92,9 @@ local SETTING_SHOW_BUTTON = "readingloc_show_floating_button"
 local SETTING_SHOW_FULL_TEXT = "readingloc_show_full_text"
 local SETTING_SHOW_PAGE_NUMBER = "readingloc_show_page_number"
 local SETTING_SHOW_DISMISS_BUTTON = "readingloc_show_dismiss_button"
+-- Whether the reference point is displayed (button + "Go back to..." wording)
+-- as a page number (default) or as a percentage of the book.
+local SETTING_MODE_PERCENTAGE = "readingloc_mode_percentage"
 
 -- The button is always docked to its fixed bottom-left/bottom-right corner.
 -- Its distance from the bottom edge, and from whichever side edge (left or
@@ -132,6 +138,20 @@ local function getPageLabel(ui, pageno)
     return tostring(pageno)
 end
 
+-- Labels a location the way the floating button/menu wording should show it:
+-- a page label (see getPageLabel above), or, when percentage mode is on, the
+-- position as a percentage of the total page count - falling back to the
+-- page label if the page count isn't available yet.
+local function getLocationLabel(ui, pageno)
+    if ReadingLocationTracker.isPercentageModeEnabled() then
+        local page_count = ReadingLocationTracker.getPageCount(ui)
+        if page_count and page_count > 0 then
+            return math.floor((pageno / page_count) * 100 + 0.5) .. "%"
+        end
+    end
+    return getPageLabel(ui, pageno)
+end
+
 --[[ ---------------------------------------------------------------------
      Floating split-button overlay (painted as part of the page, like
      KOReader's own footer/progress bar - never a separate modal window)
@@ -155,9 +175,11 @@ function ReadingLocationOverlay:_getBox(side)
     local show_full_text = ReadingLocationTracker.isFullTextEnabled()
     local show_page_number = ReadingLocationTracker.isPageNumberEnabled()
     local show_dismiss = ReadingLocationTracker.isDismissButtonEnabled()
+    local percentage_mode = ReadingLocationTracker.isPercentageModeEnabled()
     local key = table.concat({
         side, tostring(self.anchor),
         tostring(show_full_text), tostring(show_page_number), tostring(show_dismiss),
+        tostring(percentage_mode),
     }, ":")
     if side == self._cached_side and self._box and self._box_key == key then
         return self._box
@@ -208,10 +230,16 @@ function ReadingLocationOverlay:_getButtonBox(side, show_full_text, show_page_nu
     -- Point the arrow toward the screen edge this button is docked to.
     local words = {}
     if show_full_text then
-        table.insert(words, _("Go back to page"))
+        -- "page" doesn't read well in front of a percentage ("page 42%"),
+        -- so it's dropped from the wording in that mode.
+        if ReadingLocationTracker.isPercentageModeEnabled() then
+            table.insert(words, _("Go back to"))
+        else
+            table.insert(words, _("Go back to page"))
+        end
     end
     if show_page_number then
-        table.insert(words, getPageLabel(self.ui, self.anchor))
+        table.insert(words, getLocationLabel(self.ui, self.anchor))
     end
     local label = table.concat(words, " ")
     local goback_text
@@ -536,6 +564,18 @@ function ReadingLocationTracker.setDismissButtonEnabled(enabled)
     G_reader_settings:saveSetting(SETTING_SHOW_DISMISS_BUTTON, enabled and true or false)
 end
 
+function ReadingLocationTracker.isPercentageModeEnabled()
+    local v = G_reader_settings:readSetting(SETTING_MODE_PERCENTAGE)
+    if v == nil then
+        return false
+    end
+    return v == true
+end
+
+function ReadingLocationTracker.setPercentageModeEnabled(enabled)
+    G_reader_settings:saveSetting(SETTING_MODE_PERCENTAGE, enabled and true or false)
+end
+
 function ReadingLocationTracker.getBottomOffset()
     local v = G_reader_settings:readSetting(SETTING_OFFSET_BOTTOM)
     if type(v) ~= "number" then
@@ -720,9 +760,19 @@ function ReadingLocationTracker.setCurrentPageAsReadingLocation(ui)
     })
 end
 
+-- Whether the current page already IS the tracked reading location - true
+-- when there's nothing to jump back to (goToFurthestReadingLocation) and
+-- nothing new to set (setCurrentPageAsReadingLocation). Shared by both menu
+-- entries' enabled_func, so they gray out instead of just no-op'ing/notifying
+-- when tapped.
+function ReadingLocationTracker.isAtReadingLocation(ui)
+    local anchor = ui and ui._rlt_anchor
+    local current = ui and ui._rlt_current_page
+    return not anchor or anchor == current
+end
+
 function ReadingLocationTracker.goToFurthestReadingLocation(ui)
-    local anchor = ui._rlt_anchor
-    if not anchor or anchor == ui._rlt_current_page then
+    if ReadingLocationTracker.isAtReadingLocation(ui) then
         UIManager:show(Notification:new{
             text = _("You're already at your furthest reading location."),
         })
@@ -927,6 +977,26 @@ ReaderLink.addToMainMenu = function(self, menu_items)
                     end,
                 },
                 {
+                    text_func = function()
+                        return T(_("Mode: %1"), ReadingLocationTracker.isPercentageModeEnabled()
+                            and _("Percentage") or _("Page number"))
+                    end,
+                    -- No checked_func on this item (it's a cycling text
+                    -- toggle, not a checkbox), so TouchMenu:onMenuSelect
+                    -- would otherwise close the menu on tap - and, since it
+                    -- also skips the auto-updateItems() it does for checked/
+                    -- checked_func items, the text_func label needs a manual
+                    -- refresh here too, or it'd keep showing the old mode.
+                    keep_menu_open = true,
+                    callback = function(touchmenu_instance)
+                        ReadingLocationTracker.setPercentageModeEnabled(not ReadingLocationTracker.isPercentageModeEnabled())
+                        refreshFloatingButtonPreview(ui, ui._rlt_overlay and ui._rlt_overlay.visible)
+                        if touchmenu_instance then
+                            touchmenu_instance:updateItems()
+                        end
+                    end,
+                },
+                {
                     text = _("Show full text"),
                     checked_func = function()
                         return ReadingLocationTracker.isFullTextEnabled()
@@ -937,10 +1007,11 @@ ReaderLink.addToMainMenu = function(self, menu_items)
                     end,
                 },
                 {
-                    text = _("Show page number"),
-                    -- "Go back to page" doesn't make sense without a page
-                    -- number, so this is forced on (and locked) while
-                    -- "Show full text" is on - see isPageNumberEnabled().
+                    text = _("Show location/page number"),
+                    -- "Go back to page"/"Go back to" doesn't make sense
+                    -- without a value next to it, so this is forced on (and
+                    -- locked) while "Show full text" is on - see
+                    -- isPageNumberEnabled().
                     enabled_func = function()
                         return not ReadingLocationTracker.isFullTextEnabled()
                     end,
