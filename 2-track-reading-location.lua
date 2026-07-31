@@ -44,10 +44,11 @@
     and side edges of the screen (applied the same way to both corners).
 
     A second, standalone "Set current page as reading location" action is
-    also registered as a system action (gesture manager, profiles, etc. -
-    it has no menu entry of its own). It accepts the current page as the new
-    reference point on demand - the same thing tapping/holding the button's
-    "X" does - without needing an active prompt to dismiss first.
+    also available, both as its own menu entry (right below "Go to furthest
+    reading location") and as a system action (gesture manager, profiles,
+    etc.). It accepts the current page as the new reference point on demand -
+    the same thing tapping/holding the button's "X" does - without needing an
+    active prompt to dismiss first.
 
     The reference page is saved per book, so a pending prompt will still be there
     if you close the book and reopen it later.
@@ -1069,10 +1070,21 @@ ReaderLink.addToMainMenu = function(self, menu_items)
             touchmenu_instance:updateItems(1)
         end,
     }
+
+    menu_items.set_current_page_as_reading_location = {
+        text = _("Set current page as reading location"),
+        enabled_func = function()
+            return not ReadingLocationTracker.isAtReadingLocation(ui)
+        end,
+        callback = function()
+            ReadingLocationTracker.setCurrentPageAsReadingLocation(ui)
+        end,
+    }
 end
 
--- Place the new item right after "go_to_next_location" in the reader's
--- Navigation submenu.
+-- Place the new items right after "go_to_next_location" in the reader's
+-- Navigation submenu, in order: "go to furthest reading location", then
+-- "set current page as reading location".
 local ok_order, reader_menu_order = pcall(require, "ui/elements/reader_menu_order")
 if ok_order and reader_menu_order and reader_menu_order.navi then
     local navi = reader_menu_order.navi
@@ -1085,6 +1097,7 @@ if ok_order and reader_menu_order and reader_menu_order.navi then
     end
 
     table.insert(navi, insert_at, "go_to_furthest_reading_location")
+    table.insert(navi, insert_at + 1, "set_current_page_as_reading_location")
 end
 
 -- Register as a dispatchable action so it can be bound to a gesture, a
