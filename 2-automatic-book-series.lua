@@ -665,4 +665,4 @@ local function automaticSeriesPatch(plugin)
     end
 end
 
-userpatch.registerPatchPluginFunc("coverbrowser", automaticSeriesPatch)
+userpatch.registerPatchPluginFunc("projecttitle", automaticSeriesPatch)
