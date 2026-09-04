@@ -162,7 +162,8 @@ local function getLocationLabel(ui, pageno)
     if ReadingLocationTracker.isPercentageModeEnabled() then
         local page_count = ReadingLocationTracker.getPageCount(ui)
         if page_count and page_count > 0 then
-            return math.floor((pageno / page_count) * 100 + 0.5) .. "%"
+            local percentage = (pageno / page_count) * 100
+            return string.format("%.1f%%", percentage)
         end
     end
     return getPageLabel(ui, pageno)
